@@ -1,0 +1,5 @@
+{
+  "name": "CSV Visualizer Pro",
+  "description": "Ein interaktives Tool zum Hochladen von CSV-Dateien und Visualisieren von Datenverläufen mit anpassbaren Parametern.",
+  "requestFramePermissions": []
+}
