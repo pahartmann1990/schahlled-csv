@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import {
   LineChart,
   Line,
@@ -14,41 +14,12 @@ import { ParsedData, ChartConfigState, DataPoint } from '../types';
 import { getColor } from '../utils/colors';
 
 interface MainChartProps {
-  data: ParsedData;
+  data: DataPoint[]; // Received already filtered rows
   config: ChartConfigState;
 }
 
-// Helper to calculate Simple Moving Average
-const calculateMovingAverage = (data: DataPoint[], key: string, windowSize: number) => {
-  return data.map((point, index, array) => {
-    const start = Math.max(0, index - windowSize + 1);
-    const subset = array.slice(start, index + 1);
-    const sum = subset.reduce((acc, curr) => {
-      const val = curr[key];
-      return acc + (typeof val === 'number' ? val : 0);
-    }, 0);
-    return sum / subset.length;
-  });
-};
-
 export const MainChart: React.FC<MainChartProps> = ({ data, config }) => {
   
-  // Transform data if smoothing is enabled
-  const chartData = useMemo(() => {
-    if (config.smoothing <= 1) return data.rows;
-
-    const smoothedRows = data.rows.map(row => ({ ...row })); // Shallow copy
-
-    config.activeLines.forEach(key => {
-      const averages = calculateMovingAverage(data.rows, key, config.smoothing);
-      smoothedRows.forEach((row, i) => {
-        row[key] = Number(averages[i].toFixed(2)); // Overwrite with smoothed value for display
-      });
-    });
-
-    return smoothedRows;
-  }, [data.rows, config.activeLines, config.smoothing]);
-
   if (config.activeLines.length === 0) {
     return (
       <div className="h-full flex flex-col items-center justify-center bg-white border border-gray-200 rounded-xl shadow-sm p-12">
@@ -56,32 +27,27 @@ export const MainChart: React.FC<MainChartProps> = ({ data, config }) => {
            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
         </div>
         <h3 className="text-lg font-medium text-gray-900">Keine Daten ausgewählt</h3>
-        <p className="text-gray-500 mt-1 max-w-sm text-center">Aktivieren Sie Parameter in der Seitenleiste, um das Diagramm zu generieren.</p>
+        <p className="text-gray-500 mt-1 max-w-sm text-center">Wählen Sie Parameter in der Seitenleiste aus.</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100 h-[600px] w-full flex flex-col">
+    <div id="main-chart-container" className="bg-white p-6 rounded-xl shadow-lg border border-gray-100 h-[600px] w-full flex flex-col">
       <div className="flex justify-between items-center mb-6">
-          <h3 className="text-lg font-bold text-gray-800">Datenanalyse</h3>
+          <h3 className="text-lg font-bold text-gray-800">Datenanalyse Verlauf</h3>
           <div className="flex items-center space-x-4 text-sm text-gray-500">
              <span className="flex items-center">
-                <span className="w-2 h-2 rounded-full bg-blue-500 mr-2"></span>
-                {data.rows.length} Datenpunkte
+                <span className="w-2 h-2 rounded-full bg-green-500 mr-2"></span>
+                {data.length} Datensätze (Gefiltert)
              </span>
-             {config.smoothing > 0 && (
-                 <span className="flex items-center text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-100">
-                    Glättung aktiv (Ø {config.smoothing})
-                 </span>
-             )}
           </div>
       </div>
       
       <div className="flex-1 w-full min-h-0">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
-            data={chartData}
+            data={data}
             margin={{
               top: 10,
               right: 30,
@@ -129,11 +95,11 @@ export const MainChart: React.FC<MainChartProps> = ({ data, config }) => {
             {config.activeLines.map((key, index) => (
               <Line
                 key={key}
-                type="monotone" // or "natural" for smoother look
+                type="monotone"
                 dataKey={key}
                 stroke={getColor(index)}
-                activeDot={{ r: 6, strokeWidth: 0 }}
-                strokeWidth={config.strokeWidth}
+                activeDot={{ r: 5, strokeWidth: 0 }}
+                strokeWidth={2}
                 dot={false}
                 animationDuration={500}
                 isAnimationActive={true}

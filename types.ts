@@ -7,19 +7,20 @@ export interface ParsedData {
   rows: DataPoint[];
   fileName?: string;
   lastModified?: number;
+  hasTimeAxis: boolean; // Detected type (Chartable vs List)
 }
 
 export interface ChartConfigState {
   xAxisKey: string;
   activeLines: string[];
-  smoothing: number; // Moving Average Window (0 = off)
   showGrid: boolean;
-  strokeWidth: number;
+  filterStart: string; // YYYY-MM-DD
+  filterEnd: string; // YYYY-MM-DD
 }
 
 export interface ProjectFile {
   version: string;
-  type: 'csv-visualizer-project';
+  type: 'schal-led-project';
   data: ParsedData;
   config: ChartConfigState;
   savedAt: string;
