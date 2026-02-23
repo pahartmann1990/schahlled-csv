@@ -36,7 +36,12 @@ const App: React.FC = () => {
   const totalValue = useMemo(() => {
     if (!data || !activeMetric) return "0";
     const sum = data.rows.reduce((acc, row) => acc + (Number(row[activeMetric]) || 0), 0);
-    return sum.toLocaleString('de-DE', { maximumFractionDigits: 1 });
+    
+    // Wenn die Metrik ein Prozentsatz ist, berechnen wir den Durchschnitt statt der Summe
+    const isPercent = activeMetric.toLowerCase().includes('%');
+    const finalValue = isPercent ? (sum / Math.max(1, data.rows.length)) : sum;
+    
+    return finalValue.toLocaleString('de-DE', { maximumFractionDigits: 1 });
   }, [data, activeMetric]);
 
   const unit = useMemo(() => {
