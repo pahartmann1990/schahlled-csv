@@ -1,95 +1,170 @@
 import ExcelJS from 'exceljs';
-import * as htmlToImage from 'html-to-image';
 import { ParsedData, ChartConfigState } from '../types';
 
+/**
+ * Erzeugt einen professionellen Excel-Report mit Fokus auf kumulierten Werten und relativer Skalierung.
+ */
 export const generateExcelReport = async (
   data: ParsedData, 
   config: ChartConfigState, 
   filteredRows: any[]
 ) => {
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = 'Schal LED Control Center';
-  workbook.created = new Date();
+  try {
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Schal LED Energy Engine';
+    workbook.lastModifiedBy = 'Schal LED User';
+    workbook.created = new Date();
 
-  const sheet = workbook.addWorksheet('Report');
-
-  // 1. Add Data Table
-  // Define columns
-  const columns = config.xAxisKey 
-    ? [config.xAxisKey, ...config.activeLines].map(h => ({ header: h, key: h, width: 20 }))
-    : data.headers.map(h => ({ header: h, key: h, width: 20 }));
-
-  sheet.columns = columns;
-
-  // Add rows (filtered data only)
-  // Ensure we only export the columns defined above to keep it clean
-  filteredRows.forEach(row => {
-    const rowData: any = {};
-    columns.forEach(col => {
-        if(col.key) rowData[col.key] = row[col.key];
-    });
-    sheet.addRow(rowData);
-  });
-
-  // Style Header
-  sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-  sheet.getRow(1).fill = {
-    type: 'pattern',
-    pattern: 'solid',
-    fgColor: { argb: 'FF166534' } // Corporate Green
-  };
-
-  // 2. Capture and Embed Chart (only if chart exists and active lines are selected)
-  if (config.activeLines.length > 0 && data.hasTimeAxis) {
-    const chartNode = document.getElementById('main-chart-container');
+    // --- SHEET 1: VISUELLE ANALYSE (Das Zellen-Dashboard) ---
+    const dashSheet = workbook.addWorksheet('1. Analyse-Dashboard');
     
-    if (chartNode) {
-        try {
-            // Create a temporary white background for the capture
-            const originalBg = chartNode.style.backgroundColor;
-            chartNode.style.backgroundColor = '#ffffff';
-            
-            const dataUrl = await htmlToImage.toPng(chartNode, { quality: 0.95, backgroundColor: '#ffffff' });
-            
-            // Restore style
-            chartNode.style.backgroundColor = originalBg;
+    dashSheet.getColumn(2).width = 30; // Kennzahl Name
+    dashSheet.getColumn(3).width = 12; // Einheit
+    dashSheet.getColumn(4).width = 18; // GESAMT Spalte
+    
+    const metrics = data.headers.filter(h => h !== 'Date');
+    const dates = filteredRows.map(r => r['Date']);
+    
+    // Titel Styling
+    const titleCell = dashSheet.getCell('B2');
+    titleCell.value = 'SCHAL LED - ENERGIE ANALYSE REPORT';
+    titleCell.font = { name: 'Arial Black', size: 16, color: { argb: 'FF166534' } };
 
-            const imageId = workbook.addImage({
-                base64: dataUrl,
-                extension: 'png',
-            });
+    // Header Zeile (Metadaten Spalten)
+    const headerRowIdx = 4;
+    dashSheet.getCell(headerRowIdx, 2).value = 'KENNZAHL';
+    dashSheet.getCell(headerRowIdx, 3).value = 'EINHEIT';
+    dashSheet.getCell(headerRowIdx, 4).value = 'GESAMT / Ø';
+    
+    // Header Styling für Metadaten
+    [2, 3, 4].forEach(col => {
+      const cell = dashSheet.getCell(headerRowIdx, col);
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF166534' } };
+      cell.alignment = { horizontal: 'center' };
+    });
 
-            // Insert image at A1 (shifting data down?) 
-            // Better: Insert data starting at row 20, put image above
-            // Re-organize: Clear current rows, put image, put rows below.
-            
-            // Actually, let's put the data on a second sheet called "Data" and Image on "Dashboard"
-            const dashSheet = workbook.addWorksheet('Dashboard');
-            dashSheet.addImage(imageId, {
-                tl: { col: 1, row: 1 },
-                ext: { width: 800, height: 450 }
-            });
-            
-            // Move "Dashboard" to first position
-            workbook.worksheets = [dashSheet, sheet];
+    // Header Zeile (Die Monate)
+    dates.forEach((date, i) => {
+      const cell = dashSheet.getCell(headerRowIdx, i + 5);
+      cell.value = date;
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
+      cell.alignment = { horizontal: 'center' };
+      dashSheet.getColumn(i + 5).width = 15;
+    });
 
-        } catch (error) {
-            console.error("Chart capture failed", error);
-            // Proceed without chart
-        }
-    }
+    // Daten befüllen
+    metrics.forEach((metric, mIdx) => {
+      const rowIdx = headerRowIdx + 1 + mIdx;
+      const row = dashSheet.getRow(rowIdx);
+      const isPercent = metric.toLowerCase().includes('%');
+      
+      row.getCell(2).value = metric;
+      row.getCell(2).font = { bold: true };
+      
+      let unit = '-';
+      let barColor = 'FF3B82F6'; 
+      const lowMetric = metric.toLowerCase();
+      if (lowMetric.includes('kwh')) { unit = 'kWh'; barColor = 'FF10B981'; }
+      else if (lowMetric.includes('eur')) { unit = 'EUR'; barColor = 'FFF59E0B'; }
+      else if (lowMetric.includes('%')) { unit = '%'; barColor = 'FFEF4444'; }
+      else if (lowMetric.includes('kg') || lowMetric.includes('co2')) { unit = 'kg'; barColor = 'FF64748B'; }
+      
+      row.getCell(3).value = unit;
+      row.getCell(3).alignment = { horizontal: 'center' };
+
+      // Werte sammeln und Gesamt/Ø berechnen
+      let total = 0;
+      const values: number[] = [];
+      dates.forEach((date) => {
+        const dataPoint = filteredRows.find(r => r['Date'] === date);
+        const val = dataPoint ? (Number(dataPoint[metric]) || 0) : 0;
+        values.push(val);
+        total += val;
+      });
+
+      const finalAggregatedValue = isPercent ? (total / Math.max(1, values.length)) : total;
+      
+      // Gesamt/Ø Zelle befüllen
+      const totalCell = row.getCell(4);
+      totalCell.value = finalAggregatedValue;
+      totalCell.numFmt = '#,##0.0';
+      totalCell.font = { bold: true };
+      totalCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+      totalCell.alignment = { horizontal: 'right' };
+
+      // Monatswerte befüllen
+      values.forEach((val, dIdx) => {
+        const colIdx = dIdx + 5;
+        const cell = row.getCell(colIdx);
+        cell.value = val;
+        cell.numFmt = '#,##0.0';
+      });
+
+      // RELATIVE DATENBALKEN SKALIERUNG
+      // Wenn nicht Prozent: Skala geht von 0 bis zum Gesamtwert (Januar ist soundsoviel vom Jahr)
+      // Wenn Prozent: Skala geht von 0 bis 100
+      const startCol = dashSheet.getColumn(5).letter;
+      const endCol = dashSheet.getColumn(dates.length + 4).letter;
+      const range = `${startCol}${rowIdx}:${endCol}${rowIdx}`;
+      
+      dashSheet.addConditionalFormatting({
+        ref: range,
+        rules: [
+          {
+            type: 'dataBar',
+            cfvo: [
+              { type: 'num', value: 0 },
+              { 
+                type: isPercent ? 'num' : 'num', 
+                value: isPercent ? 100 : finalAggregatedValue 
+              }
+            ],
+            color: { argb: barColor },
+            showValue: true
+          }
+        ]
+      });
+    });
+
+    // --- SHEET 2: ROHDATEN (Echte Excel Tabelle) ---
+    const dataSheet = workbook.addWorksheet('2. Messwerte (Tabelle)');
+    const tableRows = filteredRows.map(r => data.headers.map(h => r[h]));
+
+    dataSheet.addTable({
+      name: 'MessdatenTabelle',
+      ref: 'A1',
+      headerRow: true,
+      totalsRow: true,
+      style: { theme: 'TableStyleMedium9', showRowStripes: true },
+      columns: data.headers.map(h => ({
+        name: h,
+        filterButton: true,
+        totalsRowFunction: h === 'Date' ? 'custom' : (h.toLowerCase().includes('%') ? 'average' : 'sum')
+      })),
+      rows: tableRows,
+    });
+    dataSheet.columns.forEach(col => { col.width = 20; });
+
+    // --- DOWNLOAD ---
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = window.URL.createObjectURL(blob);
+    
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `SchalLED_Energiebericht_${new Date().toISOString().slice(0,10)}.xlsx`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    
+    setTimeout(() => {
+      document.body.removeChild(anchor);
+      window.URL.revokeObjectURL(url);
+    }, 500);
+
+  } catch (error) {
+    console.error("Excel Export Fehler:", error);
+    alert("Export fehlgeschlagen. Bitte prüfen Sie die Browser-Konsole.");
   }
-
-  // 3. Download
-  const buffer = await workbook.xlsx.writeBuffer();
-  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `SchalLED_Report_${new Date().toISOString().slice(0,10)}.xlsx`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
 };
