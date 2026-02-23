@@ -1,369 +1,166 @@
-import React, { useState, useCallback, useRef, useMemo } from 'react';
-import { FileUploader } from './components/FileUploader';
-import { ControlPanel } from './components/ControlPanel';
+import React, { useState, useMemo, useRef } from 'react';
+import { parseFile } from './utils/csvParser';
 import { MainChart } from './components/MainChart';
-import { parseFile, mergeDatasets } from './utils/csvParser';
-import { generateExcelReport } from './utils/exportHelper';
-import { ParsedData, ChartConfigState, ProjectFile } from './types';
-import { Table, AlertCircle, Save, FolderOpen, Plus, FileText, Download, Play, Filter } from 'lucide-react';
-import { Button } from './components/Button';
+import { ParsedData, ChartConfigState } from './types';
+import { Upload, ChevronUp, ChevronLeft, ChevronRight, Lightbulb, Download, FileText, Image as ImageIcon } from 'lucide-react';
+import * as htmlToImage from 'html-to-image';
 
 const App: React.FC = () => {
   const [data, setData] = useState<ParsedData | null>(null);
-  const [config, setConfig] = useState<ChartConfigState>({ 
-      xAxisKey: '', 
-      activeLines: [],
-      showGrid: true,
-      filterStart: '',
-      filterEnd: ''
-  });
-  const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'chart' | 'table'>('chart');
+  const [activeMetric, setActiveMetric] = useState<string>('');
+  const [timeRange, setTimeRange] = useState<'WEEK' | 'MONTH' | 'YEAR'>('YEAR');
   const [loading, setLoading] = useState(false);
   
-  const projectInputRef = useRef<HTMLInputElement>(null);
-  const appendInputRef = useRef<HTMLInputElement>(null);
+  const dashboardRef = useRef<HTMLDivElement>(null);
 
-  // Filter Data Logic
-  const filteredRows = useMemo(() => {
-    if (!data) return [];
-    
-    // If no filter, return all
-    if (!config.filterStart && !config.filterEnd) return data.rows;
-
-    return data.rows.filter(row => {
-        const val = row[config.xAxisKey];
-        // Only filter if value looks like a date/string
-        if (typeof val !== 'string') return true;
-
-        const rowDate = val; // Assuming date string matching sortable format or ISO
-        
-        // Simple string comparison works for ISO YYYY-MM-DD
-        // For mixed formats, we might need Date.parse, but the parser already sorted them.
-        // Let's rely on standard lex comparisons for ISO dates which is robust
-        
-        let passStart = true;
-        let passEnd = true;
-
-        if (config.filterStart) {
-            passStart = rowDate >= config.filterStart;
-        }
-        if (config.filterEnd) {
-            passEnd = rowDate <= config.filterEnd;
-        }
-
-        return passStart && passEnd;
-    });
-  }, [data, config.filterStart, config.filterEnd, config.xAxisKey]);
-
-  const handleInitialUpload = useCallback(async (file: File) => {
+  const handleUpload = async (file: File) => {
     setLoading(true);
-    setError(null);
     try {
-        const parsed = await parseFile(file);
-        
-        if (parsed.headers.length === 0 || parsed.rows.length === 0) {
-          setError(`Die Datei ${file.name} scheint leer oder ungültig zu sein.`);
-          setLoading(false);
-          return;
-        }
-
-        setData(parsed);
-        
-        // Detect X-Axis
-        const lowerHeaders = parsed.headers.map(h => h.toLowerCase());
-        const timeIndex = lowerHeaders.findIndex(h => h.includes('time') || h.includes('datum') || h.includes('date') || h.includes('zeit'));
-        const xKey = timeIndex !== -1 ? parsed.headers[timeIndex] : parsed.headers[0];
-        
-        // Auto-select numeric columns for chart
-        const potentialLines = parsed.headers.filter(h => h !== xKey).filter(h => {
-            const firstVal = parsed.rows.find(r => r[h] !== undefined && r[h] !== null)?.[h];
-            return typeof firstVal === 'number';
-        }).slice(0, 5);
-
-        setConfig(prev => ({
-          ...prev,
-          xAxisKey: xKey,
-          activeLines: potentialLines
-        }));
-
-        // Switch tab based on type
-        if (!parsed.hasTimeAxis) {
-            setActiveTab('table');
-        } else {
-            setActiveTab('chart');
-        }
-
-    } catch (err: any) {
-        console.error(err);
-        setError("Fehler beim Lesen der Datei: " + (err.message || "Unbekannter Fehler"));
+      const parsed = await parseFile(file);
+      setData(parsed);
+      // Auto-select first non-date metric
+      const firstMetric = parsed.headers.find(h => h !== 'Date' && h !== 'metric' && h !== 'label');
+      if (firstMetric) setActiveMetric(firstMetric);
+    } catch (e) {
+      alert("Fehler beim Laden der Datei.");
     } finally {
-        setLoading(false);
+      setLoading(false);
     }
-  }, []);
-
-  const handleAppendUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file || !data) return;
-      
-      setLoading(true);
-      try {
-          const newData = await parseFile(file);
-          const merged = mergeDatasets(data, newData);
-          setData(merged);
-          alert(`${newData.rows.length} Zeilen hinzugefügt.`);
-      } catch (err: any) {
-          setError(err.message || "Fehler beim Zusammenfügen.");
-      } finally {
-          setLoading(false);
-      }
-      
-      if (e.target.value) e.target.value = '';
   };
 
-  const handleSaveProject = () => {
-      if (!data) return;
-      const project: ProjectFile = {
-          version: '1.0',
-          type: 'schal-led-project',
-          data,
-          config,
-          savedAt: new Date().toISOString()
-      };
-      
-      const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `SchalLED_Projekt_${new Date().toISOString().slice(0,10)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-  };
+  const chartConfig = useMemo((): ChartConfigState => ({
+    xAxisKey: 'Date',
+    activeLines: activeMetric ? [activeMetric] : [],
+    showGrid: true,
+    filterStart: '',
+    filterEnd: ''
+  }), [activeMetric]);
 
-  const handleLoadProject = async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
+  const totalValue = useMemo(() => {
+    if (!data || !activeMetric) return "0";
+    const sum = data.rows.reduce((acc, row) => acc + (Number(row[activeMetric]) || 0), 0);
+    return sum.toLocaleString('de-DE', { maximumFractionDigits: 0 });
+  }, [data, activeMetric]);
 
-      setLoading(true);
-      try {
-          const text = await file.text();
-          const project: ProjectFile = JSON.parse(text);
-          
-          if (project.type !== 'schal-led-project' || !project.data) {
-              throw new Error("Ungültiges Projektformat");
-          }
+  const unit = useMemo(() => {
+    if (activeMetric.includes('kWh')) return 'kWh';
+    if (activeMetric.includes('%')) return '%';
+    if (activeMetric.includes('EUR') || activeMetric.includes('Cost')) return 'EUR';
+    if (activeMetric.includes('kg') || activeMetric.includes('CO2')) return 'kg';
+    return '';
+  }, [activeMetric]);
 
-          setData(project.data);
-          setConfig(project.config);
-          setError(null);
-      } catch (err) {
-          setError("Projektdatei konnte nicht gelesen werden.");
-      } finally {
-          setLoading(false);
-      }
-      if (e.target.value) e.target.value = '';
-  };
-
-  const handleExportExcel = async () => {
-      if (!data) return;
-      setLoading(true);
-      try {
-          await generateExcelReport(data, config, filteredRows);
-      } catch (e) {
-          console.error(e);
-          alert("Fehler beim Erstellen der Excel-Datei");
-      } finally {
-          setLoading(false);
-      }
-  };
-
-  const handleReset = () => {
-    if (window.confirm("Alles zurücksetzen?")) {
-        setData(null);
-        setConfig({ xAxisKey: '', activeLines: [], showGrid: true, filterStart: '', filterEnd: '' });
-        setError(null);
+  const downloadPNG = async () => {
+    if (dashboardRef.current) {
+      const dataUrl = await htmlToImage.toPng(dashboardRef.current);
+      const link = document.createElement('a');
+      link.download = 'energy-usage-dashboard.png';
+      link.href = dataUrl;
+      link.click();
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col font-sans text-gray-900">
-      <input type="file" ref={projectInputRef} onChange={handleLoadProject} accept=".json" className="hidden" />
-      <input type="file" ref={appendInputRef} onChange={handleAppendUpload} accept=".csv, .xlsx, .xls" className="hidden" />
-
-      {/* Header */}
-      <header className="bg-white border-b border-green-600 sticky top-0 z-20 shadow-md">
-        <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-             <div className="bg-green-700 p-2 rounded-lg shadow-sm">
-                <Table className="h-6 w-6 text-white" />
-             </div>
-             <div>
-                <h1 className="text-xl font-bold text-gray-800 tracking-tight">
-                    SCHAL <span className="text-green-600">LED</span> CONTROL CENTER
-                </h1>
-                {data && (
-                    <div className="flex items-center text-xs text-gray-500 mt-0.5">
-                        <FileText className="w-3 h-3 mr-1" />
-                        {data.fileName || 'Unbenannt'} 
-                    </div>
-                )}
-             </div>
+    <div className="min-h-screen bg-gray-200 flex items-center justify-center p-4">
+      {!data ? (
+        <div className="bg-white p-12 rounded-3xl shadow-2xl max-w-lg w-full text-center">
+          <div className="bg-green-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Upload className="text-green-600 w-10 h-10" />
           </div>
-          
-          <div className="flex items-center gap-3">
-             {!data ? (
-                 <Button variant="secondary" onClick={() => projectInputRef.current?.click()} icon={<FolderOpen size={16} />}>
-                     Projekt laden
-                 </Button>
-             ) : (
-                 <>
-                    <Button variant="secondary" onClick={() => appendInputRef.current?.click()} icon={<Plus size={16} />} title="Weitere Datei anfügen">
-                       Merge
-                    </Button>
-                    <Button variant="secondary" onClick={handleSaveProject} icon={<Save size={16} />}>
-                       Speichern
-                    </Button>
-                    <Button variant="primary" onClick={handleExportExcel} icon={<Download size={16} />} className="bg-green-600 hover:bg-green-700">
-                       Excel Report
-                    </Button>
-                 </>
-             )}
+          <h1 className="text-2xl font-bold text-gray-800 mb-2">Energie Dashboard</h1>
+          <p className="text-gray-500 mb-8">Laden Sie Ihre CSV oder Excel Datei hoch, um die Analyse zu starten.</p>
+          <label className="bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-8 rounded-xl cursor-pointer transition-all inline-block">
+            {loading ? 'Lade...' : 'DATEI WÄHLEN'}
+            <input type="file" className="hidden" onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])} accept=".csv,.xlsx" />
+          </label>
+        </div>
+      ) : (
+        <div 
+          ref={dashboardRef}
+          className="bg-[#78b800] w-full max-w-[1200px] aspect-[16/10] rounded-[40px] shadow-2xl overflow-hidden flex flex-col p-8 relative"
+        >
+          {/* Header */}
+          <div className="flex flex-col items-center text-white mb-4">
+            <div className="flex items-center gap-4 mb-2">
+              <ChevronUp className="w-8 h-8 opacity-80 cursor-pointer" />
+            </div>
+            <div className="flex items-center gap-3">
+              <Lightbulb className="w-10 h-10" />
+              <h2 className="text-3xl font-light tracking-[0.2em] uppercase">Energy Usage</h2>
+            </div>
+            <div className="flex items-center gap-12 mt-6">
+              <ChevronLeft className="w-8 h-8 opacity-80 cursor-pointer" />
+              <span className="text-xl font-medium tracking-widest">2025</span>
+              <ChevronRight className="w-8 h-8 opacity-80 cursor-pointer" />
+            </div>
+          </div>
+
+          {/* Download Buttons Area */}
+          <div className="absolute right-12 top-[280px] z-10 flex gap-4">
+            <button className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white text-[10px] font-bold py-1 px-3 rounded uppercase tracking-wider transition-colors">
+              <Download size={12} /> Download CSV
+            </button>
+            <button 
+              onClick={downloadPNG}
+              className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white text-[10px] font-bold py-1 px-3 rounded uppercase tracking-wider transition-colors"
+            >
+              <Download size={12} /> Download PNG
+            </button>
+          </div>
+
+          {/* Main Dashboard Content */}
+          <div className="flex-1 flex gap-8 mb-4 items-start">
+            {/* Left Card: Big Number */}
+            <div className="w-[45%] bg-white rounded-[30px] p-12 h-[450px] flex flex-col justify-center items-center shadow-lg">
+              <h3 className="text-3xl font-bold text-gray-800 uppercase tracking-wide mb-8">Energy Usage</h3>
+              <div className="flex items-baseline gap-4">
+                <span className="text-[120px] font-light text-gray-800 leading-none">{totalValue}</span>
+                <span className="text-4xl font-normal text-gray-700">{unit}</span>
+              </div>
+            </div>
+
+            {/* Right Card: Chart */}
+            <div className="w-[55%] bg-white rounded-[30px] p-8 h-[450px] shadow-lg overflow-hidden">
+               <MainChart data={data.rows} config={chartConfig} isDashboardMode={true} />
+            </div>
+          </div>
+
+          {/* Footer Controls */}
+          <div className="flex justify-between items-end mt-4">
+            {/* Timeframe Select */}
+            <div className="flex gap-2">
+              {['WEEK', 'MONTH', 'YEAR'].map(range => (
+                <button
+                  key={range}
+                  onClick={() => setTimeRange(range as any)}
+                  className={`text-[10px] font-bold py-2 px-6 rounded-lg uppercase tracking-widest transition-all ${timeRange === range ? 'bg-white/40 text-white shadow-inner' : 'bg-white/20 text-white/80 hover:bg-white/30'}`}
+                >
+                  {range}
+                </button>
+              ))}
+            </div>
+
+            {/* Metric Select */}
+            <div className="flex flex-wrap justify-end gap-2 max-w-[60%]">
+              {data.headers.filter(h => h !== 'Date').map(metric => (
+                <button
+                  key={metric}
+                  onClick={() => setActiveMetric(metric)}
+                  className={`text-[10px] font-bold py-2 px-6 rounded-lg uppercase tracking-widest transition-all ${activeMetric === metric ? 'bg-white/40 text-white shadow-inner' : 'bg-white/20 text-white/80 hover:bg-white/30'}`}
+                >
+                  {metric}
+                </button>
+              ))}
+              <button 
+                onClick={() => setData(null)}
+                className="text-[10px] font-bold py-2 px-6 rounded-lg uppercase tracking-widest bg-black/20 text-white hover:bg-black/30"
+              >
+                Reset
+              </button>
+            </div>
           </div>
         </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="flex-1 max-w-[1920px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        
-        {error && (
-          <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded shadow-sm flex items-start">
-            <AlertCircle className="h-5 w-5 text-red-500 mr-3 mt-0.5" />
-            <div>
-                <h3 className="text-sm font-medium text-red-800">Fehler</h3>
-                <p className="mt-1 text-sm text-red-700">{error}</p>
-            </div>
-          </div>
-        )}
-
-        {!data ? (
-          <div className="max-w-xl mx-auto mt-24">
-             <div className="bg-white p-10 rounded-2xl shadow-xl border border-gray-100 text-center">
-                <h2 className="text-3xl font-bold text-gray-800 mb-3">Daten Import</h2>
-                <p className="text-gray-500 mb-8 max-w-md mx-auto">
-                    Laden Sie Ihre CSV- oder Excel-Dateien zur Analyse hoch. Das System erkennt automatisch Zeitreihen oder Inventarlisten.
-                </p>
-                
-                <FileUploader onFileUpload={handleInitialUpload} isLoading={loading} />
-             </div>
-          </div>
-        ) : (
-          <div className="flex flex-col lg:flex-row gap-6 h-[calc(100vh-140px)]">
-            
-            {/* Sidebar Controls - Only show if it's a Chart-type file */}
-            {data.hasTimeAxis && (
-                <div className="w-full lg:w-80 flex-shrink-0 h-full overflow-hidden flex flex-col">
-                <ControlPanel 
-                    data={data} 
-                    config={config} 
-                    onConfigChange={setConfig} 
-                    onReset={handleReset}
-                />
-                </div>
-            )}
-
-            {/* Content Area */}
-            <div className="flex-1 flex flex-col h-full min-w-0">
-               {/* Tabs */}
-               <div className="flex justify-between items-center mb-4">
-                   <div className="flex space-x-1 bg-white p-1 rounded-lg border border-gray-200 shadow-sm">
-                        {data.hasTimeAxis && (
-                            <button 
-                            onClick={() => setActiveTab('chart')}
-                            className={`flex items-center px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'chart' ? 'bg-green-50 text-green-700 ring-1 ring-green-200' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'}`}
-                            >
-                            <Play className="w-4 h-4 mr-2" /> Diagramm
-                            </button>
-                        )}
-                        <button 
-                          onClick={() => setActiveTab('table')}
-                          className={`flex items-center px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'table' ? 'bg-green-50 text-green-700 ring-1 ring-green-200' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'}`}
-                        >
-                          <Table className="w-4 h-4 mr-2" /> Datentabelle
-                        </button>
-                   </div>
-                   
-                   {(config.filterStart || config.filterEnd) && (
-                       <div className="text-sm text-green-700 bg-green-50 px-3 py-1 rounded-full border border-green-200 flex items-center">
-                           <Filter className="w-3 h-3 mr-2" />
-                           Filter aktiv: {filteredRows.length} von {data.rows.length} Zeilen
-                       </div>
-                   )}
-               </div>
-
-              {activeTab === 'chart' && data.hasTimeAxis ? (
-                 <MainChart data={filteredRows} config={config} />
-              ) : (
-                 <div className="bg-white shadow-lg rounded-xl border border-gray-100 overflow-hidden flex-1 flex flex-col">
-                    <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
-                        <h3 className="font-semibold text-gray-700">Listenansicht</h3>
-                        <span className="text-xs text-gray-400 font-mono">Zeigt {filteredRows.length} Einträge</span>
-                    </div>
-                    <div className="overflow-auto flex-1 p-0 custom-scrollbar relative">
-                       <table className="min-w-full divide-y divide-gray-200 border-collapse">
-                          <thead className="bg-gray-50 sticky top-0 shadow-sm z-10">
-                             <tr>
-                                <th className="px-4 py-3 bg-gray-50 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-12 border-r border-gray-200">#</th>
-                                {data.headers.map(h => (
-                                   <th key={h} className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap bg-gray-50 border-r border-gray-200 last:border-0">
-                                      {h}
-                                   </th>
-                                ))}
-                             </tr>
-                          </thead>
-                          <tbody className="bg-white divide-y divide-gray-100">
-                             {filteredRows.slice(0, 500).map((row, i) => ( 
-                                <tr key={i} className="hover:bg-green-50 transition-colors group">
-                                   <td className="px-4 py-2 whitespace-nowrap text-xs text-gray-400 font-mono border-r border-gray-100 bg-gray-50 group-hover:bg-green-50">{i + 1}</td>
-                                   {data.headers.map(h => (
-                                      <td key={`${i}-${h}`} className="px-6 py-2 whitespace-nowrap text-sm text-gray-600 font-mono border-r border-gray-100 last:border-0">
-                                         {row[h]}
-                                      </td>
-                                   ))}
-                                </tr>
-                             ))}
-                          </tbody>
-                       </table>
-                       {filteredRows.length > 500 && (
-                           <div className="p-4 text-center text-sm text-gray-500 bg-gray-50 border-t sticky bottom-0">
-                               Vorschau begrenzt auf 500 Zeilen. (Der Excel-Export enthält alle {filteredRows.length} Zeilen)
-                           </div>
-                       )}
-                    </div>
-                 </div>
-              )}
-            </div>
-          </div>
-        )}
-      </main>
-      
-      <style>{`
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 8px;
-          height: 8px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-          background: #f8fafc; 
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: #cbd5e1; 
-          border-radius: 4px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: #94a3b8; 
-        }
-      `}</style>
+      )}
     </div>
   );
 };
