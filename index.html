@@ -20,8 +20,7 @@
     "react-dom/client": "https://esm.sh/react-dom@19/client?dev",
     "lucide-react": "https://esm.sh/lucide-react@0.475.0?external=react",
     "recharts": "https://esm.sh/recharts@2.15.0?external=react,react-dom",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs",
-    "exceljs": "https://esm.sh/exceljs@4.4.0"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs"
   }
 }
 </script>
@@ -52,7 +51,6 @@ import {
   FileSpreadsheet 
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import ExcelJS from 'exceljs';
 
 // --- TYPES ---
 interface DataPoint {
@@ -150,145 +148,38 @@ const generateExcelReport = async (
   filteredRows: any[]
 ) => {
   try {
-    const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Schal LED Energy Engine';
-    workbook.lastModifiedBy = 'Schal LED User';
-    workbook.created = new Date();
-
-    const dashSheet = workbook.addWorksheet('1. Analyse-Dashboard');
+    const wb = XLSX.utils.book_new();
     
-    dashSheet.getColumn(2).width = 30;
-    dashSheet.getColumn(3).width = 12;
-    dashSheet.getColumn(4).width = 18;
-    
+    // Sheet 1: Analysedaten
     const metrics = data.headers.filter(h => h !== 'Date');
-    const dates = filteredRows.map(r => r['Date']);
-    
-    const titleCell = dashSheet.getCell('B2');
-    titleCell.value = 'SCHAL LED - ENERGIE ANALYSE REPORT';
-    titleCell.font = { name: 'Arial Black', size: 16, color: { argb: 'FF166534' } };
-
-    const headerRowIdx = 4;
-    dashSheet.getCell(headerRowIdx, 2).value = 'KENNZAHL';
-    dashSheet.getCell(headerRowIdx, 3).value = 'EINHEIT';
-    dashSheet.getCell(headerRowIdx, 4).value = 'GESAMT / Ø';
-    
-    [2, 3, 4].forEach(col => {
-      const cell = dashSheet.getCell(headerRowIdx, col);
-      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF166534' } };
-      cell.alignment = { horizontal: 'center' };
-    });
-
-    dates.forEach((date, i) => {
-      const cell = dashSheet.getCell(headerRowIdx, i + 5);
-      cell.value = date;
-      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
-      cell.alignment = { horizontal: 'center' };
-      dashSheet.getColumn(i + 5).width = 15;
-    });
-
-    metrics.forEach((metric, mIdx) => {
-      const rowIdx = headerRowIdx + 1 + mIdx;
-      const row = dashSheet.getRow(rowIdx);
+    const analysisData = metrics.map(metric => {
       const isPercent = metric.toLowerCase().includes('%');
-      
-      row.getCell(2).value = metric;
-      row.getCell(2).font = { bold: true };
+      const sum = filteredRows.reduce((acc, row) => acc + (Number(row[metric]) || 0), 0);
+      const avg = sum / Math.max(1, filteredRows.length);
+      const finalVal = isPercent ? avg : sum;
       
       let unit = '-';
-      let barColor = 'FF3B82F6'; 
       const lowMetric = metric.toLowerCase();
-      if (lowMetric.includes('kwh')) { unit = 'kWh'; barColor = 'FF10B981'; }
-      else if (lowMetric.includes('eur')) { unit = 'EUR'; barColor = 'FFF59E0B'; }
-      else if (lowMetric.includes('%')) { unit = '%'; barColor = 'FFEF4444'; }
-      else if (lowMetric.includes('kg') || lowMetric.includes('co2')) { unit = 'kg'; barColor = 'FF64748B'; }
-      
-      row.getCell(3).value = unit;
-      row.getCell(3).alignment = { horizontal: 'center' };
+      if (lowMetric.includes('kwh')) unit = 'kWh';
+      else if (lowMetric.includes('eur')) unit = 'EUR';
+      else if (lowMetric.includes('%')) unit = '%';
+      else if (lowMetric.includes('kg') || lowMetric.includes('co2')) unit = 'kg';
 
-      let total = 0;
-      const values: number[] = [];
-      dates.forEach((date) => {
-        const dataPoint = filteredRows.find(r => r['Date'] === date);
-        const val = dataPoint ? (Number(dataPoint[metric]) || 0) : 0;
-        values.push(val);
-        total += val;
-      });
-
-      const finalAggregatedValue = isPercent ? (total / Math.max(1, values.length)) : total;
-      
-      const totalCell = row.getCell(4);
-      totalCell.value = finalAggregatedValue;
-      totalCell.numFmt = '#,##0.0';
-      totalCell.font = { bold: true };
-      totalCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
-      totalCell.alignment = { horizontal: 'right' };
-
-      values.forEach((val, dIdx) => {
-        const colIdx = dIdx + 5;
-        const cell = row.getCell(colIdx);
-        cell.value = val;
-        cell.numFmt = '#,##0.0';
-      });
-
-      const startCol = dashSheet.getColumn(5).letter;
-      const endCol = dashSheet.getColumn(dates.length + 4).letter;
-      const range = `${startCol}${rowIdx}:${endCol}${rowIdx}`;
-      
-      dashSheet.addConditionalFormatting({
-        ref: range,
-        rules: [
-          {
-            type: 'dataBar',
-            cfvo: [
-              { type: 'num', value: 0 },
-              { 
-                type: 'num', 
-                value: isPercent ? 100 : finalAggregatedValue 
-              }
-            ],
-            color: { argb: barColor },
-            showValue: true
-          }
-        ]
-      });
+      return {
+        'KENNZAHL': metric,
+        'EINHEIT': unit,
+        'WERT': finalVal
+      };
     });
+    const ws1 = XLSX.utils.json_to_sheet(analysisData);
+    XLSX.utils.book_append_sheet(wb, ws1, "1. Analysedaten");
 
-    const dataSheet = workbook.addWorksheet('2. Messwerte (Tabelle)');
-    const tableRows = filteredRows.map(r => data.headers.map(h => r[h]));
+    // Sheet 2: Rohdaten
+    const ws2 = XLSX.utils.json_to_sheet(filteredRows);
+    XLSX.utils.book_append_sheet(wb, ws2, "2. Rohdaten");
 
-    dataSheet.addTable({
-      name: 'MessdatenTabelle',
-      ref: 'A1',
-      headerRow: true,
-      totalsRow: true,
-      style: { theme: 'TableStyleMedium9', showRowStripes: true },
-      columns: data.headers.map(h => ({
-        name: h,
-        filterButton: true,
-        totalsRowFunction: h === 'Date' ? 'custom' : (h.toLowerCase().includes('%') ? 'average' : 'sum')
-      })),
-      rows: tableRows,
-    });
-    dataSheet.columns.forEach(col => { col.width = 20; });
-
-    const buffer = await workbook.xlsx.writeBuffer();
-    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = window.URL.createObjectURL(blob);
-    
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `SchalLED_Energiebericht_${new Date().toISOString().slice(0,10)}.xlsx`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    
-    setTimeout(() => {
-      document.body.removeChild(anchor);
-      window.URL.revokeObjectURL(url);
-    }, 500);
-
+    // Export
+    XLSX.writeFile(wb, `SchalLED_Energiebericht_${new Date().toISOString().slice(0,10)}.xlsx`);
   } catch (error) {
     console.error("Excel Export Fehler:", error);
     alert("Export fehlgeschlagen. Bitte prüfen Sie die Browser-Konsole.");
@@ -501,7 +392,7 @@ const App: React.FC = () => {
               {['WEEK', 'MONTH', 'YEAR'].map(range => (
                 <button
                   key={range}
-                  onClick={() => setTimeRange(range)}
+                  onClick={() => setTimeRange(range as any)}
                   className={`text-[11px] font-bold py-3 px-8 rounded-xl uppercase tracking-[0.2em] transition-all ${timeRange === range ? 'bg-white text-emerald-700 shadow-xl' : 'text-white hover:bg-white/10'}`}
                 >
                   {range}
