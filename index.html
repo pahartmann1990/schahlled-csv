@@ -271,7 +271,7 @@ const generateExcelReport = async (
         totalsRowFunction: h === 'Date' ? 'custom' : (h.toLowerCase().includes('%') ? 'average' : 'sum')
       })),
       rows: tableRows,
-    });
+    })h;
     dataSheet.columns.forEach(col => { col.width = 20; });
 
     const buffer = await workbook.xlsx.writeBuffer();
@@ -501,7 +501,7 @@ const App: React.FC = () => {
               {['WEEK', 'MONTH', 'YEAR'].map(range => (
                 <button
                   key={range}
-                  onClick={() => setTimeRange(range as any)}
+                  onClick={() => setTimeRange(range)}
                   className={`text-[11px] font-bold py-3 px-8 rounded-xl uppercase tracking-[0.2em] transition-all ${timeRange === range ? 'bg-white text-emerald-700 shadow-xl' : 'text-white hover:bg-white/10'}`}
                 >
                   {range}
