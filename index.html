@@ -271,7 +271,7 @@ const generateExcelReport = async (
         totalsRowFunction: h === 'Date' ? 'custom' : (h.toLowerCase().includes('%') ? 'average' : 'sum')
       })),
       rows: tableRows,
-    })h;
+    });
     dataSheet.columns.forEach(col => { col.width = 20; });
 
     const buffer = await workbook.xlsx.writeBuffer();
